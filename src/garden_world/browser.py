@@ -7,6 +7,7 @@ headless ``search_and_fetch()`` / ``fetch_note()`` runs.
 """
 from __future__ import annotations
 
+import base64 as _b64
 import json as _json
 import re
 import sys
@@ -63,8 +64,14 @@ def _open_persistent(
     profile_dir: Path,
     *,
     headless: bool,
+    block_resources: bool = True,
 ) -> BrowserContext:
-    """Open (or create) a persistent Chromium context at *profile_dir*."""
+    """Open (or create) a persistent Chromium context at *profile_dir*.
+
+    *block_resources* — when True **and** headless, heavy resources
+    (images, fonts, video) are blocked to speed up scraping.  Set to
+    False for the login flow so the QR-code image can render.
+    """
     profile_dir.mkdir(parents=True, exist_ok=True)
     ctx = pw.chromium.launch_persistent_context(
         str(profile_dir),
@@ -80,7 +87,7 @@ def _open_persistent(
         args=["--disable-blink-features=AutomationControlled"],
     )
     ctx.add_init_script(_STEALTH_JS)
-    if headless:
+    if headless and block_resources:
         _block_heavy_resources(ctx)
     return ctx
 
@@ -96,8 +103,14 @@ def _block_heavy_resources(ctx: BrowserContext) -> None:
 # Login flow (headed, interactive)
 # ---------------------------------------------------------------------------
 
-def login(profile_dir: Path) -> bool:
-    """Open a **headed** browser for the user to scan XHS QR code.
+def login(profile_dir: Path, *, headless: bool = False) -> bool:
+    """Open a browser for the user to scan XHS QR code.
+
+    When *headless* is True (recommended for QClaw / remote), the browser
+    runs without a visible window.  The QR code is captured as a
+    screenshot and emitted via ``QR_IMAGE:`` (file path) and
+    ``QR_BASE64:`` (inline PNG data) so the caller can relay it to the
+    end-user.
 
     Strategy (closed-loop, self-verifying):
       1. Open the XHS **search page** — it shows a login wall overlay.
@@ -106,21 +119,23 @@ def login(profile_dir: Path) -> bool:
          appear — this is the only reliable success signal.
     """
     with sync_playwright() as pw:
-        ctx = _open_persistent(pw, profile_dir, headless=False)
+        ctx = _open_persistent(pw, profile_dir, headless=headless, block_resources=False)
         try:
             page = ctx.pages[0] if ctx.pages else ctx.new_page()
 
             # Go to search page — login wall appears on top
             search_url = _XHS_SEARCH_URL.format(keyword="花园世界 兑换码")
             page.goto(search_url, wait_until="domcontentloaded", timeout=_NAV_TIMEOUT)
-            time.sleep(2)
+            time.sleep(3)
 
             # --- Screenshot the full login wall for QClaw ---
             qr_path = profile_dir / "qr.png"
             _screenshot_login_wall(page, qr_path)
 
-            print("请在弹出的浏览器窗口中用小红书 App 扫码登录。")
-            print("登录成功后将自动验证并关闭浏览器。")
+            # Flush immediately so QClaw poll can see QR_IMAGE/QR_BASE64
+            # BEFORE the blocking scan-wait loop below.
+            print("LOGIN_WAIT: 请用小红书 App 或微信扫描上方二维码登录。", flush=True)
+            print("LOGIN_WAIT: 登录成功后将自动验证并关闭浏览器（超时2分钟）。", flush=True)
 
             # --- Poll: wait for search results to actually appear ---
             deadline = time.time() + _LOGIN_TIMEOUT / 1000
@@ -145,14 +160,14 @@ def login(profile_dir: Path) -> bool:
                     continue
 
             if not logged_in:
-                print("ERROR: 登录超时（2分钟内未检测到搜索结果）", file=sys.stderr)
+                print("LOGIN_FAIL: 登录超时（2分钟内未检测到搜索结果）", flush=True)
                 return False
 
             # Write marker
             marker = profile_dir / ".logged_in"
             marker.write_text("1")
 
-            print(f"登录成功！已验证搜索结果可见。浏览器配置已保存到 {profile_dir}")
+            print(f"LOGIN_OK: 登录成功！浏览器配置已保存到 {profile_dir}", flush=True)
             return True
 
         finally:
@@ -160,27 +175,39 @@ def login(profile_dir: Path) -> bool:
 
 
 def _screenshot_login_wall(page: Page, dest: Path) -> None:
-    """Screenshot the full-page login wall overlay, or fall back to full page."""
+    """Screenshot the login wall and emit both file path and base64 data.
+
+    Outputs (flushed immediately so QClaw ``poll`` can see them):
+      - ``QR_IMAGE: <absolute path>``
+      - ``QR_BASE64: <png base64 string>``
+    """
     dest.parent.mkdir(parents=True, exist_ok=True)
+    captured = False
     try:
-        # Try to find the modal/overlay container that covers the page
         wall = page.query_selector(
             '[class*="login-container"], [class*="login-modal"], '
             '[class*="overlay"], [class*="mask"]'
         )
         if wall and wall.is_visible():
             wall.screenshot(path=str(dest))
-            print(f"QR_IMAGE: {dest}")
-            return
+            captured = True
     except Exception:
         pass
 
-    # Fallback: full visible viewport screenshot — always works
-    try:
-        page.screenshot(path=str(dest))
-        print(f"QR_IMAGE: {dest}")
-    except Exception:
-        pass
+    if not captured:
+        try:
+            page.screenshot(path=str(dest))
+            captured = True
+        except Exception:
+            pass
+
+    if captured:
+        print(f"QR_IMAGE: {dest}", flush=True)
+        try:
+            b64_str = _b64.b64encode(dest.read_bytes()).decode()
+            print(f"QR_BASE64: {b64_str}", flush=True)
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------------

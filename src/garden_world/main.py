@@ -591,8 +591,12 @@ def run(now_mode: bool, force_refresh: bool) -> int:
         return 0
 
     except AuthRequired as e:
-        print(f"STATUS: auth_required", file=sys.stderr)
-        print(f"ERROR: {e}", file=sys.stderr)
+        print("STATUS: auth_required")
+        print(f"ERROR: {e}")
+        print("ACTION: 请运行 `garden-world login` 进行扫码登录。"
+              "命令会输出 QR_IMAGE（文件路径）和 QR_BASE64（图片base64），"
+              "请将二维码图片发送给用户用小红书或微信扫码。")
+        sys.stdout.flush()
         return 2
 
     except Exception:
@@ -601,10 +605,15 @@ def run(now_mode: bool, force_refresh: bool) -> int:
         return 1
 
 
-def run_login() -> int:
-    """Interactive login flow — opens headed browser for QR code scan."""
+def run_login(headless: bool = False) -> int:
+    """Login flow — opens browser for QR code scan.
+
+    With ``headless=True``, no visible window is opened; the QR code
+    screenshot is emitted via ``QR_IMAGE`` / ``QR_BASE64`` on stdout
+    so QClaw can relay it to the user.
+    """
     settings = Settings.from_env()
-    ok = login(settings.profile_dir)
+    ok = login(settings.profile_dir, headless=headless)
     return 0 if ok else 1
 
 
@@ -615,12 +624,16 @@ def main() -> None:
     parser.add_argument("--now", action="store_true", help="run once for current time")
     parser.add_argument("--force-refresh", action="store_true", help="force re-search")
 
-    sub.add_parser("login", help="扫码登录小红书，保存凭证供后续使用")
+    login_parser = sub.add_parser("login", help="扫码登录小红书，保存凭证供后续使用")
+    login_parser.add_argument(
+        "--headless", action="store_true",
+        help="无头模式：不弹出浏览器窗口，通过 QR_IMAGE/QR_BASE64 输出二维码",
+    )
 
     args = parser.parse_args()
 
     if args.command == "login":
-        raise SystemExit(run_login())
+        raise SystemExit(run_login(headless=args.headless))
     else:
         raise SystemExit(run(now_mode=args.now, force_refresh=args.force_refresh))
 

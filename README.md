@@ -98,14 +98,27 @@ python3 -m playwright install chromium
 
 ### 2. 首次登录小红书
 
+**方式一：本地有显示器**
 ```bash
 garden-world login
 ```
+弹出浏览器窗口，用小红书 App 扫码登录。
 
-弹出浏览器窗口，用小红书 App 扫码登录。登录成功后凭证保存到 `.garden_world/browser_profile/`（Chromium 持久化会话目录，包含 cookies、localStorage、IndexedDB 等完整浏览器状态）。
+**方式二：远程/无 GUI 环境（推荐用于 QClaw）**
+```bash
+garden-world login --headless
+```
+无窗口模式。命令会在标准输出打印：
+- `QR_IMAGE: <path>` — 二维码截图文件路径
+- `QR_BASE64: <base64>` — 二维码 PNG 的 base64 编码（可直接内嵌 `data:image/png;base64,...`）
+- `LOGIN_WAIT:` — 等待扫码中
+- `LOGIN_OK:` — 登录成功
+- `LOGIN_FAIL:` — 超时（2分钟内未扫码）
 
-> 凭证过期后工具会提示重新登录，一般可持续数天到数周。
-> 登录时会截取整个登录墙截图保存为 `browser_profile/qr.png`，可用于远程推送辅助扫码。
+所有输出均即时 flush，适合 QClaw 的 `exec` + `poll` 模式：后台启动命令，立即 poll 获取 QR 图片发送给用户。
+
+> 凭证保存到 `.garden_world/browser_profile/`（Chromium 持久化会话目录），一般可持续数天到数周。
+> 凭证过期后 `garden-world --now` 会输出 `STATUS: auth_required`，需重新登录。
 
 ### 3. 手动运行一次
 
@@ -171,7 +184,8 @@ garden-world/
 
 | 命令/参数 | 说明 |
 |------|------|
-| `login` | 打开浏览器扫码登录小红书，保存凭证 |
+| `login` | 扫码登录小红书，保存凭证 |
+| `login --headless` | 无窗口模式登录，QR 码通过 stdout 输出 |
 | `--now` | 立即执行一次，检查当前时间是否有新码可发 |
 | `--force-refresh` | 强制重新搜索（跳过缓存URL快速路径） |
 

@@ -23,13 +23,68 @@ pip install /path/to/garden-world   # 或 pip install -e /path/to/garden-world
 python3 -m playwright install chromium
 ```
 
-**首次使用**需登录小红书（搜索功能需要登录）：
-```bash
-garden-world login
-```
-弹出浏览器窗口，用小红书 App 扫码登录。凭证保存在 `.garden_world/browser_profile/`（Chromium 持久化会话目录）。
+## 登录流程（重要⚠️）
 
-若输出包含 `QR_IMAGE:` 行，其后的文件路径即为登录二维码截图（整个登录墙），可推送给用户辅助远程扫码。
+小红书搜索需要登录。当 `garden-world --now` 输出 `STATUS: auth_required` 时，按以下步骤操作：
+
+### 步骤 1：启动登录（后台命令）
+
+使用 `exec` 运行登录命令，**必须作为后台命令执行**（它会阻塞等待扫码，最长 2 分钟）：
+
+```bash
+garden-world login --headless
+```
+
+> `--headless` 不弹出浏览器窗口，二维码通过标准输出传递。
+
+### 步骤 2：poll 获取二维码
+
+立即 `poll` 该命令的输出，你会看到：
+
+```
+QR_IMAGE: /path/to/.garden_world/browser_profile/qr.png
+QR_BASE64: iVBORw0KGgoAAAANSUh...（很长的base64字符串）
+LOGIN_WAIT: 请用小红书 App 或微信扫描上方二维码登录。
+```
+
+### 步骤 3：发送二维码给用户
+
+**必须将二维码图片发送到当前会话**，让用户能扫码。推荐方式：
+
+将 `QR_BASE64:` 后的 base64 字符串用 markdown 图片语法发送：
+```
+![小红书登录二维码](data:image/png;base64,<QR_BASE64的值>)
+```
+
+同时告知用户："请用小红书 App 或微信扫描二维码登录，登录后我会自动继续。"
+
+### 步骤 4：等待登录完成
+
+继续 `poll` 登录命令的输出：
+- 看到 `LOGIN_OK:` — 登录成功！重新执行 `garden-world --now`。
+- 看到 `LOGIN_FAIL:` — 登录超时（2分钟）。从步骤 1 重新开始。
+
+### 流程图
+
+```
+garden-world --now
+       │
+       ├── STATUS: ok → 处理 NOTIFY 行
+       │
+       └── STATUS: auth_required
+              │
+              ▼
+    exec(后台): garden-world login --headless
+              │
+              ▼
+    poll → QR_IMAGE + QR_BASE64
+              │
+              ▼
+    将二维码图片发送给用户，提示扫码
+              │
+              ▼
+    poll → LOGIN_OK → garden-world --now（重新执行）
+```
 
 ## 核心工作流
 
@@ -49,7 +104,7 @@ garden-world login
    - `STATUS: ok` — 成功。查看 `NOTIFY:` 行。
    - `STATUS: no_today_post_found` — 今日帖子尚未发布，稍后重试。
    - `STATUS: no_new_code_due` — 无新增需推送的码（已推送或限时码尚未公布）。
-   - `STATUS: auth_required`（stderr）— 登录过期。提醒用户运行 `garden-world login`。若有 `QR_IMAGE:` 行，可将截图推送给用户。
+   - **`STATUS: auth_required`** — 登录过期或首次运行。**必须执行上方的「登录流程」**。
 3. 如有 `NOTIFY:` 行，逐条发送到当前会话渠道。
 4. `INFO: windows=` 行显示限时码状态：`✓` 表示码已获取，`?` 表示尚未公布。
 5. 如需强制重新搜索（跳过缓存URL），运行 `garden-world --now --force-refresh`。
