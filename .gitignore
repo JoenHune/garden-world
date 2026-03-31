@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+.venv/
+.garden_world/
+.DS_Store
