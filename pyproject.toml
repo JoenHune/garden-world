@@ -3,7 +3,7 @@ name = "garden-world"
 version = "0.1.0"
 description = "QClaw skill for My Garden World redeem code automation"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = ["playwright>=1.40"]
 
 [project.scripts]
 garden-world = "garden_world.main:main"
