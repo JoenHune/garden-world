@@ -110,7 +110,7 @@ garden-world login --headless
 ```
 无窗口模式。命令会在标准输出打印：
 - `QR_IMAGE: <path>` — 二维码截图文件路径
-- `QR_BASE64: <base64>` — 二维码 PNG 的 base64 编码（可直接内嵌 `data:image/png;base64,...`）
+- `QR_BASE64: <base64>` — 二维码 PNG 的 base64 编码（备用，优先用 `QR_IMAGE` 文件路径发送图片）
 - `LOGIN_WAIT:` — 等待扫码中
 - `LOGIN_OK:` — 登录成功
 - `LOGIN_FAIL:` — 超时（2分钟内未扫码）
@@ -143,7 +143,7 @@ SCHEDULE_HINT: QClaw cron 每5分钟运行一次；首次19:00开始
 **方式一：安装为 QClaw Skill（推荐）**
 
 ```bash
-cp -r skill/garden-world ~/.openclaw/skills/garden-world
+cp -r skills/garden-world ~/.openclaw/skills/garden-world
 ```
 
 然后在 QClaw 中对话：「帮我设置花园世界兑换码定时抓取」
@@ -166,7 +166,7 @@ openclaw cron add \
 ```
 garden-world/
 ├── pyproject.toml                  # 项目元数据
-├── skill/garden-world/SKILL.md     # QClaw/OpenClaw Skill 定义
+├── skills/garden-world/SKILL.md    # QClaw/OpenClaw Skill 定义
 ├── src/garden_world/
 │   ├── __init__.py
 │   ├── __main__.py                 # python -m 入口

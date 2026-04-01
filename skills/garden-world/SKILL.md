@@ -54,11 +54,16 @@ LOGIN_WAIT: 请用小红书 App 或微信扫描上方二维码登录。
 ### 步骤 3：将二维码发送给用户
 
 **必须将二维码图片发送到当前会话**，让用户能扫码。
-用 `QR_BASE64:` 后的 base64 字符串拼接 markdown 图片：
 
-```markdown
-![小红书登录二维码](data:image/png;base64,<QR_BASE64的值>)
+使用 `QR_IMAGE:` 后面的文件路径，将该图片文件直接发送给用户：
+
 ```
+QR_IMAGE: /path/to/.garden_world/browser_profile/qr.png
+         ↑ 将此路径的图片文件发送到对话中
+```
+
+> `QR_BASE64:` 行是同一张图片的 base64 编码，作为备用方案。
+> 优先使用文件路径发送图片，避免 base64 文本被直接显示给用户。
 
 同时告知用户：「请用小红书 App 或微信扫描二维码登录，登录后我会自动继续。」
 
