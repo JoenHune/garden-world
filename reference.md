@@ -37,11 +37,19 @@ LOGIN_STARTING: 正在启动浏览器，请稍候…
 LOGIN_STARTING: 浏览器已启动，正在加载登录页面…
 QR_IMAGE: /path/to/.garden_world/browser_profile/qr.png
 QR_BASE64: iVBORw0KGgoAAAANSUh...
-LOGIN_WAIT: 请用小红书 App 或微信扫描上方二维码登录。
-LOGIN_WAIT: 登录成功后将自动验证并关闭浏览器（超时2分钟）。
+LOGIN_WAIT: 请用小红书 App 或微信扫描上方二维码登录（超时4分钟）。
+LOGIN_WAIT: 等待扫码中… 剩余 225 秒
+LOGIN_WAIT: 等待扫码中… 剩余 210 秒
+...
+LOGIN_WAIT: 二维码可能已刷新，正在重新截图…
+QR_IMAGE: /path/to/.garden_world/browser_profile/qr.png
+QR_BASE64: iVBORw0KGgoAAAANSUh...
+LOGIN_WAIT: 新二维码已生成，请重新扫码（剩余 135 秒）
 ...
 LOGIN_OK: 登录成功！浏览器配置已保存到 .garden_world/browser_profile
 ```
+
+> 每 15 秒输出一次倒计时状态，每 90 秒自动刷新二维码并重新输出 `QR_IMAGE:`。
 
 ### 登录流程图
 
@@ -56,7 +64,12 @@ garden-world --now
     exec(后台): garden-world login --headless
               │
               ▼
-    poll → QR_IMAGE → 将图片文件发送给用户
+    poll → QR_IMAGE → 立即将图片文件发送给用户
+              │
+              ▼
+    poll → LOGIN_WAIT (倒计时) → 告知用户进度
+              │
+              ├── 90秒后 → 新 QR_IMAGE → 重新发送图片
               │
               ▼
     poll → LOGIN_OK → garden-world --now（重新执行）

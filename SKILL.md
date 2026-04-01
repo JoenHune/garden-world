@@ -42,14 +42,17 @@ python3 -m playwright install chromium
 
 当输出 `STATUS: auth_required` 时：
 
-1. **后台启动**：`exec garden-world login --headless`（阻塞最长 2 分钟）
-2. **poll 获取二维码**：看到 `QR_IMAGE: <文件路径>` 后，将该图片文件直接发送给用户
+1. **后台启动**：`exec garden-world login --headless`（阻塞最长 4 分钟）
+2. **poll 获取二维码**：看到 `QR_IMAGE: <文件路径>` 后，**立即**将该图片文件发送给用户
 3. **提示用户**：「请用小红书 App 或微信扫描二维码登录」
-4. **等待结果**：继续 poll
+4. **持续 poll 并转发状态**：
+   - `LOGIN_WAIT: 等待扫码中… 剩余 N 秒` → 告知用户当前进度
+   - `LOGIN_WAIT: 新二维码已生成…` → 二维码已刷新，**再次发送 QR_IMAGE 图片**
    - `LOGIN_OK:` → 登录成功，重新运行 `garden-world --now`
    - `LOGIN_FAIL:` → 超时，从步骤 1 重新开始
 
 > 优先用 `QR_IMAGE:` 文件路径发送图片，`QR_BASE64:` 是备用 base64 编码。
+> 每 90 秒自动刷新二维码并重新输出 `QR_IMAGE:`，注意转发最新的图片。
 
 ## 核心工作流
 

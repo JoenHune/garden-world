@@ -39,7 +39,8 @@ _XHS_NOTE_URL = _XHS_BASE + "/explore/{note_id}"
 
 # Timeouts
 _NAV_TIMEOUT = 30_000      # page navigation
-_LOGIN_TIMEOUT = 120_000   # max wait for QR login (2 min)
+_LOGIN_TIMEOUT = 240_000   # max wait for QR login (4 min)
+_QR_REFRESH_INTERVAL = 90  # re-screenshot QR every N seconds
 _SEARCH_WAIT = 6           # seconds — fallback AJAX wait
 
 
@@ -130,7 +131,7 @@ def login(profile_dir: Path, *, headless: bool = False) -> bool:
             # Go to search page — login wall appears on top
             search_url = _XHS_SEARCH_URL.format(keyword="花园世界 兑换码")
             page.goto(search_url, wait_until="domcontentloaded", timeout=_NAV_TIMEOUT)
-            time.sleep(3)
+            time.sleep(2)  # minimal wait for login wall to render
 
             # --- Screenshot the full login wall for QClaw ---
             qr_path = profile_dir / "qr.png"
@@ -138,14 +139,42 @@ def login(profile_dir: Path, *, headless: bool = False) -> bool:
 
             # Flush immediately so QClaw poll can see QR_IMAGE/QR_BASE64
             # BEFORE the blocking scan-wait loop below.
-            print("LOGIN_WAIT: 请用小红书 App 或微信扫描上方二维码登录。", flush=True)
-            print("LOGIN_WAIT: 登录成功后将自动验证并关闭浏览器（超时2分钟）。", flush=True)
+            timeout_min = _LOGIN_TIMEOUT // 60_000
+            print(f"LOGIN_WAIT: 请用小红书 App 或微信扫描上方二维码登录（超时{timeout_min}分钟）。", flush=True)
 
             # --- Poll: wait for search results to actually appear ---
             deadline = time.time() + _LOGIN_TIMEOUT / 1000
+            last_qr_time = time.time()
+            last_ping_time = time.time()
             logged_in = False
+
             while time.time() < deadline:
                 time.sleep(3)
+                remaining = int(deadline - time.time())
+
+                # Periodic progress: every 15s emit a status line
+                if time.time() - last_ping_time >= 15:
+                    last_ping_time = time.time()
+                    print(
+                        f"LOGIN_WAIT: 等待扫码中… 剩余 {remaining} 秒",
+                        flush=True,
+                    )
+
+                # Re-screenshot QR periodically (QR may expire/refresh)
+                if time.time() - last_qr_time >= _QR_REFRESH_INTERVAL:
+                    last_qr_time = time.time()
+                    print("LOGIN_WAIT: 二维码可能已刷新，正在重新截图…", flush=True)
+                    try:
+                        page.reload(wait_until="domcontentloaded", timeout=_NAV_TIMEOUT)
+                        time.sleep(2)
+                        _screenshot_login_wall(page, qr_path)
+                        print(
+                            f"LOGIN_WAIT: 新二维码已生成，请重新扫码（剩余 {remaining} 秒）",
+                            flush=True,
+                        )
+                    except Exception:
+                        pass
+
                 try:
                     body = page.inner_text("body")
                     if "登录后查看" in body:
@@ -159,12 +188,15 @@ def login(profile_dir: Path, *, headless: bool = False) -> bool:
                         break
                     # Login wall gone but no links yet — refresh
                     page.goto(search_url, wait_until="domcontentloaded", timeout=_NAV_TIMEOUT)
-                    time.sleep(4)
+                    time.sleep(3)
                 except Exception:
                     continue
 
             if not logged_in:
-                print("LOGIN_FAIL: 登录超时（2分钟内未检测到搜索结果）", flush=True)
+                print(
+                    f"LOGIN_FAIL: 登录超时（{timeout_min}分钟内未检测到搜索结果）",
+                    flush=True,
+                )
                 return False
 
             # Write marker
