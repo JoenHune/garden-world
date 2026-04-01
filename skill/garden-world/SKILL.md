@@ -1,7 +1,13 @@
-```skill
 ---
 name: garden-world
-description: 自动抓取"我的花园世界"每日兑换码（通用码+周码+限时码），渐进式检测限时码更新并在适当时机推送。
+description: >
+  自动抓取手游「我的花园世界」每日小红书兑换码（通用码+周码+限时码），
+  渐进式检测限时码更新并在适当时机推送。当用户提到「花园世界兑换码」
+  「通码」「周码」「限时码」时，使用此技能。
+version: 0.1.0
+compatibility: >
+  Python >=3.9, Playwright >=1.40 + Chromium。
+  macOS / Linux / Windows 均可。需要网络访问 xiaohongshu.com。
 metadata:
   openclaw:
     requires:
@@ -13,58 +19,56 @@ metadata:
 
 # garden-world
 
-当用户提到"我的花园世界兑换码""通码""周码""限时码"时，优先使用此技能。
+## 安装
 
-## 前提
-
-安装项目及浏览器：
 ```bash
 pip install /path/to/garden-world   # 或 pip install -e /path/to/garden-world
 python3 -m playwright install chromium
 ```
 
-## 登录流程（重要⚠️）
+## 登录流程
 
-小红书搜索需要登录。当 `garden-world --now` 输出 `STATUS: auth_required` 时，按以下步骤操作：
+小红书搜索需要登录。当 `garden-world --now` 输出 `STATUS: auth_required` 时，
+必须先完成登录。
 
-### 步骤 1：启动登录（后台命令）
-
-使用 `exec` 运行登录命令，**必须作为后台命令执行**（它会阻塞等待扫码，最长 2 分钟）：
+### 步骤 1：后台启动登录命令
 
 ```bash
 garden-world login --headless
 ```
 
+> 该命令会阻塞等待扫码（最长 2 分钟），必须用 `exec` 以后台方式运行。
 > `--headless` 不弹出浏览器窗口，二维码通过标准输出传递。
 
 ### 步骤 2：poll 获取二维码
 
-立即 `poll` 该命令的输出，你会看到：
+立即 `poll` 该命令的输出，会看到：
 
 ```
+LOGIN_STARTING: 正在启动浏览器，请稍候…
 QR_IMAGE: /path/to/.garden_world/browser_profile/qr.png
-QR_BASE64: iVBORw0KGgoAAAANSUh...（很长的base64字符串）
+QR_BASE64: iVBORw0KGgoAAAANSUh...（base64 字符串）
 LOGIN_WAIT: 请用小红书 App 或微信扫描上方二维码登录。
 ```
 
-### 步骤 3：发送二维码给用户
+### 步骤 3：将二维码发送给用户
 
-**必须将二维码图片发送到当前会话**，让用户能扫码。推荐方式：
+**必须将二维码图片发送到当前会话**，让用户能扫码。
+用 `QR_BASE64:` 后的 base64 字符串拼接 markdown 图片：
 
-将 `QR_BASE64:` 后的 base64 字符串用 markdown 图片语法发送：
-```
+```markdown
 ![小红书登录二维码](data:image/png;base64,<QR_BASE64的值>)
 ```
 
-同时告知用户："请用小红书 App 或微信扫描二维码登录，登录后我会自动继续。"
+同时告知用户：「请用小红书 App 或微信扫描二维码登录，登录后我会自动继续。」
 
 ### 步骤 4：等待登录完成
 
 继续 `poll` 登录命令的输出：
-- 看到 `LOGIN_OK:` — 登录成功！重新执行 `garden-world --now`。
-- 看到 `LOGIN_FAIL:` — 登录超时（2分钟）。从步骤 1 重新开始。
+- `LOGIN_OK:` — 登录成功，重新执行 `garden-world --now`
+- `LOGIN_FAIL:` — 登录超时，从步骤 1 重新开始
 
-### 流程图
+### 登录流程图
 
 ```
 garden-world --now
@@ -77,10 +81,7 @@ garden-world --now
     exec(后台): garden-world login --headless
               │
               ▼
-    poll → QR_IMAGE + QR_BASE64
-              │
-              ▼
-    将二维码图片发送给用户，提示扫码
+    poll → QR_IMAGE + QR_BASE64 → 发送给用户
               │
               ▼
     poll → LOGIN_OK → garden-world --now（重新执行）
@@ -90,26 +91,43 @@ garden-world --now
 
 本技能采用**渐进式检测**架构：
 
-1. **首次运行** — 搜索小红书，找到当天兑换码帖子，推送通用码（和周码，若有），缓存帖子URL。
-2. **后续运行** — 直接重新访问缓存URL（快速路径，无需再搜索），检测是否有新的限时码被博主更新。
-3. **渐进推送** — 每个限时码在其时间窗开始后5分钟且代码值非空时推送。已推送的码不会重复推送。
+1. **首次运行** — 搜索小红书，找到当天兑换码帖子，推送通用码（和周码），缓存帖子 URL
+2. **后续运行** — 直接访问缓存 URL（快速路径，无需搜索），检测新的限时码
+3. **渐进推送** — 限时码在其时间窗开始后 5 分钟且代码值非空时推送，已推送不重复
 
-> 博主通常在19:00左右发帖，帖子里只有时间窗但限时码为空。之后在每个时间窗开始时编辑帖子填入限时码。
-> 本技能在每次cron执行时重新抓取帖子，一旦发现新增的限时码就立即推送。
+> 博主通常 19:00 左右发帖，帖子先有时间窗但限时码为空，
+> 之后在每个时间窗开始时编辑帖子填入限时码。
+> 本技能每次 cron 执行时重新抓取帖子，发现新增码立即推送。
 
 ## 执行步骤
 
-1. 使用 `exec` 工具运行：`garden-world --now`
+1. 运行 `garden-world --now`
 2. 解读输出：
-   - `STATUS: ok` — 成功。查看 `NOTIFY:` 行。
-   - `STATUS: no_today_post_found` — 今日帖子尚未发布，稍后重试。
-   - `STATUS: no_new_code_due` — 无新增需推送的码（已推送或限时码尚未公布）。
-   - **`STATUS: auth_required`** — 登录过期或首次运行。**必须执行上方的「登录流程」**。
-3. 如有 `NOTIFY:` 行，逐条发送到当前会话渠道。
-4. `INFO: windows=` 行显示限时码状态：`✓` 表示码已获取，`?` 表示尚未公布。
-5. 如需强制重新搜索（跳过缓存URL），运行 `garden-world --now --force-refresh`。
+   - `STATUS: ok` — 成功，查看 `NOTIFY:` 行
+   - `STATUS: no_today_post_found` — 今日帖子尚未发布，稍后重试
+   - `STATUS: no_new_code_due` — 无新增需推送的码
+   - `STATUS: auth_required` — 登录过期，**执行上方「登录流程」**
+3. 如有 `NOTIFY:` 行，逐条发送到当前会话
+4. `INFO: windows=` 行显示限时码状态：`✓` 已获取，`?` 尚未公布
+5. 强制重新搜索：`garden-world --now --force-refresh`
 
-## 环境变量（可选）
+## 结构化输出格式
+
+| 前缀 | 含义 |
+|------|------|
+| `STATUS:` | 执行结果状态码 |
+| `NOTIFY:` | 需发送给用户的兑换码消息 |
+| `INFO:` | 诊断信息（时间窗状态、信任博主等） |
+| `SCHEDULE_HINT:` | cron 调度建议 |
+| `ACTION:` | 需要执行的操作指引 |
+| `LOGIN_STARTING:` | 登录浏览器启动中 |
+| `LOGIN_WAIT:` | 等待扫码中 |
+| `LOGIN_OK:` | 登录成功 |
+| `LOGIN_FAIL:` | 登录超时或失败 |
+| `QR_IMAGE:` | 二维码截图文件路径 |
+| `QR_BASE64:` | 二维码 PNG 的 base64 编码 |
+
+## 环境变量
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
@@ -121,7 +139,8 @@ garden-world --now
 
 ## 建议的定时任务
 
-每5分钟执行一次（19:00-23:30 CST），覆盖所有限时码窗口：
+每 5 分钟执行一次（19:00–23:30 CST），覆盖所有限时码窗口：
+
 ```bash
 openclaw cron add \
   --name "garden-world-codes" \
@@ -135,10 +154,9 @@ openclaw cron add \
 
 ## 注意事项
 
-- 周码是可选的，不是每天都有。
-- 限时码通常有3个，每个有15分钟窗口，分布在约19:58、21:26、22:14左右（每天不同）。
-- 首次发现帖子时限时码可能为空（显示为 `?`），这是正常的 — 后续cron运行会自动检测更新。
-- **信任博主机制**：成功解析的高质量博文会记录博主ID，下次搜索时优先选择该博主的帖子（+5评分加成），避免每天从零搜索。
-- 支持7种博文格式变体（点分时间如`20.12`、`限时兑换码+兑换码N:`、`限时(HH:MM-HH:MM)兑换码:`、`限时码一/二/三` 中文序号等）。
-- `INFO: trusted_bloggers=` 行显示当前信任博主及其成功次数。
-```
+- 周码是可选的，不是每天都有
+- 限时码通常有 3 个，每个有 15 分钟窗口，分布在约 19:58、21:26、22:14 左右（每天不同）
+- 首次发现帖子时限时码可能为空（显示为 `?`），后续 cron 会自动检测更新
+- **信任博主机制**：高质量博文的作者 ID 被记录，下次搜索时优先选择（+5 评分加成）
+- 支持 7 种博文格式变体
+- `INFO: trusted_bloggers=` 行显示当前信任博主及其成功次数
