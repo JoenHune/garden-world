@@ -74,12 +74,13 @@ with sync_playwright() as pw:
                 print(f"  {sel}: ERROR {exc}", flush=True)
 
         # --- Take full-page screenshot regardless ---
-        full_path = fresh_profile / "full_page.png"
+        out_dir = Path(__file__).resolve().parent.parent
+        full_path = out_dir / "full_page.png"
         page.screenshot(path=str(full_path), full_page=True)
         print(f"\nFull-page screenshot: {full_path} ({full_path.stat().st_size} bytes)", flush=True)
 
         # --- Also try the production screenshot function ---
-        qr_path = fresh_profile / "qr_test.png"
+        qr_path = out_dir / "qr_test.png"
         bmod._screenshot_login_wall(page, qr_path)
 
         if qr_path.exists():
