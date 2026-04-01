@@ -618,6 +618,11 @@ def run_login(headless: bool = False) -> int:
 
 
 def main() -> None:
+    # Force line-buffered stdout so QClaw poll sees output in real time
+    # (when stdout is a pipe, Python defaults to full buffering)
+    if hasattr(sys.stdout, 'reconfigure'):
+        sys.stdout.reconfigure(line_buffering=True)
+
     parser = argparse.ArgumentParser(description="garden-world qclaw skill runner")
     sub = parser.add_subparsers(dest="command")
 

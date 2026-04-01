@@ -118,10 +118,14 @@ def login(profile_dir: Path, *, headless: bool = False) -> bool:
       3. Poll until "登录后查看搜索结果" disappears AND explore links
          appear — this is the only reliable success signal.
     """
+    print("LOGIN_STARTING: 正在启动浏览器，请稍候…", flush=True)
+
     with sync_playwright() as pw:
         ctx = _open_persistent(pw, profile_dir, headless=headless, block_resources=False)
         try:
             page = ctx.pages[0] if ctx.pages else ctx.new_page()
+
+            print("LOGIN_STARTING: 浏览器已启动，正在加载登录页面…", flush=True)
 
             # Go to search page — login wall appears on top
             search_url = _XHS_SEARCH_URL.format(keyword="花园世界 兑换码")
