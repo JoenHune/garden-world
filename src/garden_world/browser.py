@@ -181,22 +181,33 @@ def login(profile_dir: Path, *, headless: bool = False) -> bool:
 def _screenshot_login_wall(page: Page, dest: Path) -> None:
     """Screenshot the login wall and emit both file path and base64 data.
 
+    Tries selectors from most specific (login-container) to least specific
+    (full page) so the screenshot is focused on the QR code area.
+
     Outputs (flushed immediately so QClaw ``poll`` can see them):
       - ``QR_IMAGE: <absolute path>``
       - ``QR_BASE64: <png base64 string>``
     """
     dest.parent.mkdir(parents=True, exist_ok=True)
+
+    # Priority order: most focused first
+    _WALL_SELECTORS = [
+        '[class*="login-container"]',   # dialog box (~800x480)
+        '[class*="login-modal"]',       # full modal overlay
+        '[class*="overlay"]',
+        '[class*="mask"]',
+    ]
+
     captured = False
-    try:
-        wall = page.query_selector(
-            '[class*="login-container"], [class*="login-modal"], '
-            '[class*="overlay"], [class*="mask"]'
-        )
-        if wall and wall.is_visible():
-            wall.screenshot(path=str(dest))
-            captured = True
-    except Exception:
-        pass
+    for sel in _WALL_SELECTORS:
+        try:
+            wall = page.query_selector(sel)
+            if wall and wall.is_visible():
+                wall.screenshot(path=str(dest))
+                captured = True
+                break
+        except Exception:
+            continue
 
     if not captured:
         try:
