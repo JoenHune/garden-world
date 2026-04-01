@@ -165,19 +165,24 @@ openclaw cron add \
 
 ```
 garden-world/
-├── pyproject.toml                  # 项目元数据
-├── skills/garden-world/SKILL.md    # QClaw/OpenClaw Skill 定义
+├── pyproject.toml                          # 项目元数据
+├── skills/garden-world/                    # AgentSkills 标准目录
+│   ├── SKILL.md                            # 技能定义（核心指令）
+│   ├── LICENSE.txt                         # MIT-0 许可证
+│   ├── reference.md                        # 详细参考文档
+│   └── scripts/
+│       └── install.sh                      # 安装脚本
 ├── src/garden_world/
 │   ├── __init__.py
-│   ├── __main__.py                 # python -m 入口
-│   ├── browser.py                  # Playwright 浏览器自动化 + SSR 提取
-│   ├── config.py                   # 配置（支持环境变量）
-│   ├── models.py                   # 数据模型
-│   └── main.py                     # 核心逻辑（渐进式检测 + 信任博主）
+│   ├── __main__.py                         # python -m 入口
+│   ├── browser.py                          # Playwright 浏览器自动化 + SSR 提取
+│   ├── config.py                           # 配置（支持环境变量）
+│   ├── models.py                           # 数据模型
+│   └── main.py                             # 核心逻辑（渐进式检测 + 信任博主）
 └── tests/
-    ├── test_parser.py              # 解析器测试（11个格式用例）
-    ├── test_progressive.py         # 渐进式推送模拟测试
-    └── test_trusted_bloggers.py    # 信任博主管理测试
+    ├── test_parser.py                      # 解析器测试（11个格式用例）
+    ├── test_progressive.py                 # 渐进式推送模拟测试
+    └── test_trusted_bloggers.py            # 信任博主管理测试
 ```
 
 ## 命令行参数
