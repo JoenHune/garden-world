@@ -81,7 +81,7 @@ def _open_persistent(
         user_agent=(
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
             "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/125.0.0.0 Safari/537.36"
+            "Chrome/131.0.0.0 Safari/537.36"
         ),
         locale="zh-CN",
         timezone_id="Asia/Shanghai",
@@ -271,6 +271,97 @@ def _ensure_auth(profile_dir: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Vue-router based note-detail fetcher
+# ---------------------------------------------------------------------------
+
+_FEED_API_PATTERN = "/api/sns/web/v1/feed"
+
+
+def _fetch_note_via_router(
+    page: Page,
+    note_id: str,
+    xsec_token: str = "",
+) -> Optional[NoteResult]:
+    """Fetch a single note by triggering XHS's own Vue 3 router.
+
+    This makes XHS's client-side JS issue the feed API call with proper
+    cryptographic signatures (``X-s``, ``X-s-common``, ``X-t``) that the
+    server requires — we cannot forge these ourselves.
+
+    Pre-condition: *page* must already be on an XHS page where the Vue 3
+    app (``#app.__vue_app__``) and its router are loaded.
+    """
+    # Build the route query parameters (mirrors what a real click sends)
+    query_parts = "xsec_source: 'pc_search', source: 'web_search_result_note'"
+    if xsec_token:
+        # Escape single-quotes in token (tokens are base64, shouldn't have any)
+        safe_token = xsec_token.replace("'", "\\'")
+        query_parts = f"xsec_token: '{safe_token}', " + query_parts
+
+    push_js = f"""() => {{
+        const app = document.querySelector('#app');
+        if (!app || !app.__vue_app__) return 'no_vue_app';
+        const router = app.__vue_app__.config.globalProperties.$router;
+        if (!router) return 'no_router';
+        router.push({{
+            path: '/explore/{note_id}',
+            query: {{ {query_parts} }}
+        }});
+        return 'ok';
+    }}"""
+
+    try:
+        with page.expect_response(
+            lambda r: _FEED_API_PATTERN in r.url,
+            timeout=15_000,
+        ) as feed_info:
+            status = page.evaluate(push_js)
+            if status != "ok":
+                print(
+                    f"INFO: Vue router not available ({status}) for {note_id}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                return None
+
+        feed_resp = feed_info.value
+        data = feed_resp.json()
+    except Exception as exc:
+        print(
+            f"INFO: feed response wait failed for {note_id}: {exc}",
+            file=sys.stderr,
+            flush=True,
+        )
+        return None
+
+    if not isinstance(data, dict) or not data.get("success"):
+        _code = data.get("code", "") if isinstance(data, dict) else ""
+        print(
+            f"INFO: feed API returned success=false for {note_id}: code={_code}",
+            file=sys.stderr,
+            flush=True,
+        )
+        return None
+
+    items = (data.get("data") or {}).get("items", [])
+    if not items:
+        return None
+
+    nc = items[0].get("note_card", {})
+    title = nc.get("title", "")
+    desc = nc.get("desc", "")
+    text = f"{title}\n{desc}".strip()
+    if not text:
+        return None
+
+    user = nc.get("user", {})
+    uid = user.get("user_id", "") or user.get("userId", "")
+    nick = user.get("nickname", "") or user.get("nickName", "")
+    note_url = _XHS_NOTE_URL.format(note_id=note_id)
+    return NoteResult(url=note_url, text=text, user_id=uid, nickname=nick)
+
+
+# ---------------------------------------------------------------------------
 # Search & Fetch (headless, authenticated)
 # ---------------------------------------------------------------------------
 
@@ -280,8 +371,16 @@ def search_and_fetch(
     limit: int = 8,
     *,
     profile_dir: Path,
-) -> list[tuple[str, str]]:
+) -> list[NoteResult]:
     """Search XHS and fetch note text, using the persistent browser profile.
+
+    Strategy (v3 — Vue-router SPA navigation):
+      1. Load the search-results page and intercept the
+         ``/api/sns/web/v1/search/notes`` response for note metadata.
+      2. For each candidate, use the page's Vue 3 router to push to
+         ``/explore/{note_id}`` — this triggers XHS's own JS to call
+         the feed API with proper cryptographic signatures.
+      3. Intercept the feed API response for full title + description.
 
     Returns list of :class:`NoteResult` with url, text, user_id, nickname.
     """
@@ -293,21 +392,30 @@ def search_and_fetch(
         try:
             page = ctx.new_page()
 
-            # --- Search ---
+            # --- Search (intercept API response) ---
             search_kw = f"{keyword} {date_hint}" if date_hint else keyword
-            page.goto(
-                _XHS_SEARCH_URL.format(keyword=search_kw),
-                wait_until="domcontentloaded",
-                timeout=_NAV_TIMEOUT,
-            )
-
+            search_api_items: list[dict] = []
             try:
-                page.wait_for_selector(
-                    'section.note-item, a[href*="/explore/"], [data-v][class*="note"]',
+                with page.expect_response(
+                    lambda r: "/api/sns/web/v1/search/notes" in r.url,
                     timeout=_NAV_TIMEOUT,
-                )
+                ) as search_resp_info:
+                    page.goto(
+                        _XHS_SEARCH_URL.format(keyword=search_kw),
+                        wait_until="domcontentloaded",
+                        timeout=_NAV_TIMEOUT,
+                    )
+                search_body = search_resp_info.value.json()
+                search_api_items = search_body.get("data", {}).get("items", [])
             except Exception:
-                time.sleep(_SEARCH_WAIT)
+                # Fallback: wait for DOM render
+                try:
+                    page.wait_for_selector(
+                        'section.note-item, a[href*="/explore/"]',
+                        timeout=_NAV_TIMEOUT,
+                    )
+                except Exception:
+                    time.sleep(_SEARCH_WAIT)
 
             _dismiss_overlays(page)
 
@@ -318,54 +426,44 @@ def search_and_fetch(
                     "登录凭证已过期，请重新运行 garden-world login。"
                 )
 
-            # Collect note IDs
-            links = page.eval_on_selector_all(
-                'a[href*="/explore/"]',
-                "els => els.map(el => el.href)",
-            )
-
-            note_ids: list[str] = []
+            # --- Collect candidates from search API response ---
+            # Deduplicate and limit
             seen: set[str] = set()
-            for href in links:
-                m = re.search(r"/explore/([a-f0-9]{24})", href)
-                if not m:
-                    continue
-                nid = m.group(1)
-                if nid in seen:
+            candidates: list[dict] = []
+            for item in search_api_items:
+                nid = item.get("id", "")
+                if not nid or nid in seen:
                     continue
                 seen.add(nid)
-                note_ids.append(nid)
-                if len(note_ids) >= limit:
+                candidates.append(item)
+                if len(candidates) >= limit:
                     break
 
-            # --- Fetch each note ---
-            for nid in note_ids:
-                note_url = _XHS_NOTE_URL.format(note_id=nid)
-                try:
-                    page.goto(
-                        note_url,
-                        wait_until="domcontentloaded",
-                        timeout=_NAV_TIMEOUT,
-                    )
-                    try:
-                        page.wait_for_selector(
-                            '#detail-title, [class*="note-text"], [class*="title"]',
-                            timeout=15_000,
-                        )
-                    except Exception:
-                        time.sleep(2)
+            # Fallback: if API interception yielded nothing, scrape links
+            if not candidates:
+                links = page.eval_on_selector_all(
+                    'a[href*="/explore/"]',
+                    "els => els.map(el => el.href)",
+                )
+                for href in links:
+                    m = re.search(r"/explore/([a-f0-9]{24})", href)
+                    if not m:
+                        continue
+                    nid = m.group(1)
+                    if nid in seen:
+                        continue
+                    seen.add(nid)
+                    candidates.append({"id": nid, "xsec_token": ""})
+                    if len(candidates) >= limit:
+                        break
 
-                    _dismiss_overlays(page)
-                    nd = _extract_note_data(page)
-                    if nd.text and len(nd.text) > 20:
-                        results.append(NoteResult(
-                            url=note_url,
-                            text=nd.text,
-                            user_id=nd.user_id,
-                            nickname=nd.nickname,
-                        ))
-                except Exception:
-                    continue
+            # --- Fetch each note via Vue router + feed API ---
+            for item in candidates:
+                nid = item["id"]
+                xsec = item.get("xsec_token", "")
+                nr = _fetch_note_via_router(page, nid, xsec)
+                if nr and len(nr.text) > 20:
+                    results.append(nr)
 
         finally:
             ctx.close()
@@ -374,35 +472,68 @@ def search_and_fetch(
 
 
 def fetch_note(note_url: str, *, profile_dir: Path) -> Optional[NoteResult]:
-    """Re-fetch a single XHS note page and return a :class:`NoteResult`.
+    """Re-fetch a single XHS note and return a :class:`NoteResult`.
 
     Used by the cron loop to re-check a cached post for newly-revealed
     timed codes without repeating the full search.
+
+    Strategy: load the XHS search page (to bootstrap the Vue 3 app),
+    then use the client-side router to navigate to the note.  This makes
+    XHS's own JS issue the feed API call with proper signed headers.
     """
     _ensure_auth(profile_dir)
+
+    m = re.search(r"/explore/([a-f0-9]{24})", note_url)
+    note_id = m.group(1) if m else ""
+    if not note_id:
+        return None
 
     with sync_playwright() as pw:
         ctx = _open_persistent(pw, profile_dir, headless=True)
         try:
             page = ctx.new_page()
-            page.goto(note_url, wait_until="domcontentloaded", timeout=_NAV_TIMEOUT)
-            try:
-                page.wait_for_selector(
-                    '#detail-title, [class*="note-text"], [class*="title"]',
-                    timeout=15_000,
-                )
-            except Exception:
-                time.sleep(2)
 
+            # Load a search page so Vue app + router are available
+            page.goto(
+                _XHS_SEARCH_URL.format(keyword="花园世界 兑换码"),
+                wait_until="domcontentloaded",
+                timeout=_NAV_TIMEOUT,
+            )
+            time.sleep(2)
             _dismiss_overlays(page)
-            nd = _extract_note_data(page)
-            if nd.text and len(nd.text) > 20:
-                return NoteResult(
-                    url=note_url,
-                    text=nd.text,
-                    user_id=nd.user_id,
-                    nickname=nd.nickname,
+
+            # --- Primary: Vue router → feed API ---
+            nr = _fetch_note_via_router(page, note_id)
+            if nr and len(nr.text) > 20:
+                return nr
+
+            # --- Fallback: navigate to note page (works in some cases) ---
+            try:
+                page.goto(
+                    note_url,
+                    wait_until="domcontentloaded",
+                    timeout=_NAV_TIMEOUT,
                 )
+                try:
+                    page.wait_for_selector(
+                        '#detail-title, [class*="note-text"], [class*="title"]',
+                        timeout=15_000,
+                    )
+                except Exception:
+                    time.sleep(2)
+
+                _dismiss_overlays(page)
+                nd = _extract_note_data(page)
+                if nd.text and len(nd.text) > 20:
+                    return NoteResult(
+                        url=note_url,
+                        text=nd.text,
+                        user_id=nd.user_id,
+                        nickname=nd.nickname,
+                    )
+            except Exception:
+                pass
+
             return None
         except Exception:
             return None
