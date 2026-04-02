@@ -698,7 +698,7 @@ def _downrank_stale_bloggers(
 # Entry points
 # ---------------------------------------------------------------------------
 
-def run(now_mode: bool, force_refresh: bool) -> int:
+def run(now_mode: bool, force_refresh: bool, auto_login: bool = False) -> int:
     try:
         settings = Settings.from_env()
         now = _now(settings.timezone)
@@ -748,6 +748,19 @@ def run(now_mode: bool, force_refresh: bool) -> int:
         return 0
 
     except AuthRequired as e:
+        if auto_login:
+            print("STATUS: auth_required", flush=True)
+            print("AUTO_LOGIN: 检测到登录过期，自动启动登录流程…", flush=True)
+            ok = login(settings.profile_dir, headless=True)
+            if ok:
+                print("AUTO_LOGIN: 登录成功，正在重新获取兑换码…", flush=True)
+                # Retry the main flow after successful login
+                return run(now_mode=now_mode, force_refresh=True, auto_login=False)
+            else:
+                print("STATUS: login_failed")
+                print("ERROR: 自动登录超时，请手动运行 garden-world login")
+                sys.stdout.flush()
+                return 2
         print("STATUS: auth_required")
         print(f"ERROR: {e}")
         print("ACTION: 请运行 `garden-world login` 进行扫码登录。"
@@ -785,6 +798,8 @@ def main() -> None:
 
     parser.add_argument("--now", action="store_true", help="run once for current time")
     parser.add_argument("--force-refresh", action="store_true", help="force re-search")
+    parser.add_argument("--auto-login", action="store_true",
+                        help="登录过期时自动启动 headless 登录流程，输出 QR_IMAGE 供转发")
 
     login_parser = sub.add_parser("login", help="扫码登录小红书，保存凭证供后续使用")
     login_parser.add_argument(
@@ -797,7 +812,8 @@ def main() -> None:
     if args.command == "login":
         raise SystemExit(run_login(headless=args.headless))
     else:
-        raise SystemExit(run(now_mode=args.now, force_refresh=args.force_refresh))
+        raise SystemExit(run(now_mode=args.now, force_refresh=args.force_refresh,
+                             auto_login=getattr(args, 'auto_login', False)))
 
 
 if __name__ == "__main__":

@@ -28,31 +28,41 @@ python3 -m playwright install chromium
 
 ## 执行步骤
 
-1. 运行 `garden-world --now`
+1. 运行 `garden-world --now --auto-login`
 2. 解读输出：
    - `STATUS: ok` — 成功，查看 `NOTIFY:` 行
    - `STATUS: no_today_post_found` — 今日帖子尚未发布，稍后重试
    - `STATUS: no_new_code_due` — 无新增需推送的码
-   - `STATUS: auth_required` — 登录过期，**必须执行「登录流程」**
+   - `QR_IMAGE: <路径>` — 登录过期，二维码已自动生成，**立即用 `message` 工具的 `media` 参数转发图片给用户**
+   - `LOGIN_OK:` — 用户扫码成功，程序自动重试获取兑换码
+   - `LOGIN_FAIL:` / `STATUS: login_failed` — 超时，告诉用户稍后重试
 3. 如有 `NOTIFY:` 行，逐条发送到当前会话
 4. `INFO: windows=` 行显示限时码状态：`✓` 已获取，`?` 尚未公布
-5. 强制重新搜索：`garden-world --now --force-refresh`
+5. 强制重新搜索：`garden-world --now --force-refresh --auto-login`
 
-## 登录流程
+> **`--auto-login`** 会在登录过期时自动启动 headless 登录流程并输出 QR 二维码，
+> 登录成功后自动重试 `--now`，**省去一次 LLM 往返，大幅缩短二维码送达时间**。
 
-当输出 `STATUS: auth_required` 时：
+## 登录流程（自动模式）
 
-1. **后台启动**：`exec garden-world login --headless`（阻塞最长 4 分钟）
-2. **poll 获取二维码**：看到 `QR_IMAGE: <文件路径>` 后，**立即**将该图片文件发送给用户
-3. **提示用户**：「请用小红书 App 或微信扫描二维码登录」
-4. **持续 poll 并转发状态**：
-   - `LOGIN_WAIT: 等待扫码中… 剩余 N 秒` → 告知用户当前进度
-   - `LOGIN_WAIT: 新二维码已生成…` → 二维码已刷新，**再次发送 QR_IMAGE 图片**
-   - `LOGIN_OK:` → 登录成功，重新运行 `garden-world --now`
-   - `LOGIN_FAIL:` → 超时，从步骤 1 重新开始
+使用 `--auto-login` 时，登录流程完全内联在 `--now` 中：
 
-> 优先用 `QR_IMAGE:` 文件路径发送图片，`QR_BASE64:` 是备用 base64 编码。
+1. 检测到 `auth_required` → 自动启动 headless 浏览器
+2. 输出 `QR_IMAGE: <文件路径>` → **立即**用 `message(action='send', media='<文件路径>')` 发送给用户
+3. 输出 `LOGIN_WAIT:` 行 → 告知用户当前进度
+4. 输出 `LOGIN_OK:` → 自动重新获取兑换码
+
+> 必须用 `media` 参数传文件路径，不要用 `buffer` 或 base64。
 > 每 90 秒自动刷新二维码并重新输出 `QR_IMAGE:`，注意转发最新的图片。
+> 小红书二维码约 90 秒过期，**必须立即转发，不能延迟**。
+
+## 手动登录流程（备用）
+
+如需手动登录（不用 `--auto-login`）：
+
+1. `garden-world login --headless`（阻塞最长 4 分钟）
+2. 看到 `QR_IMAGE:` 后转发图片给用户
+3. `LOGIN_OK:` 后重新运行 `garden-world --now`
 
 ## 核心工作流
 

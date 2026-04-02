@@ -7,7 +7,6 @@ headless ``search_and_fetch()`` / ``fetch_note()`` runs.
 """
 from __future__ import annotations
 
-import base64 as _b64
 import json as _json
 import re
 import sys
@@ -109,9 +108,8 @@ def login(profile_dir: Path, *, headless: bool = False) -> bool:
 
     When *headless* is True (recommended for QClaw / remote), the browser
     runs without a visible window.  The QR code is captured as a
-    screenshot and emitted via ``QR_IMAGE:`` (file path) and
-    ``QR_BASE64:`` (inline PNG data) so the caller can relay it to the
-    end-user.
+    screenshot and emitted via ``QR_IMAGE:`` (absolute file path) so
+    the caller can relay it to the end-user.
 
     Strategy (closed-loop, self-verifying):
       1. Open the XHS **search page** — it shows a login wall overlay.
@@ -211,14 +209,13 @@ def login(profile_dir: Path, *, headless: bool = False) -> bool:
 
 
 def _screenshot_login_wall(page: Page, dest: Path) -> None:
-    """Screenshot the login wall and emit both file path and base64 data.
+    """Screenshot the login wall and emit the file path.
 
     Tries selectors from most specific (login-container) to least specific
     (full page) so the screenshot is focused on the QR code area.
 
     Outputs (flushed immediately so QClaw ``poll`` can see them):
       - ``QR_IMAGE: <absolute path>``
-      - ``QR_BASE64: <png base64 string>``
     """
     dest.parent.mkdir(parents=True, exist_ok=True)
 
@@ -250,11 +247,6 @@ def _screenshot_login_wall(page: Page, dest: Path) -> None:
 
     if captured:
         print(f"QR_IMAGE: {dest}", flush=True)
-        try:
-            b64_str = _b64.b64encode(dest.read_bytes()).decode()
-            print(f"QR_BASE64: {b64_str}", flush=True)
-        except Exception:
-            pass
 
 
 # ---------------------------------------------------------------------------
