@@ -38,6 +38,7 @@ _EMPTY_STATE: dict = {
     "sent": {},
     "cached_post_url": "",
     "cached_date": "",
+    "cached_post_user_id": "",
     "trusted_bloggers": {},  # user_id → {nickname, success_count, last_seen}
 }
 
@@ -134,6 +135,7 @@ def _find_today_bundle(
     if best:
         state["cached_post_url"] = best.post_url
         state["cached_date"] = today_key
+        state["cached_post_user_id"] = best_user[0]
         # Update trusted blogger records
         _update_trusted_blogger(bloggers, best_user, best_score, today_key)
 
@@ -232,6 +234,24 @@ def _clean_code(val: str) -> str:
 def _normalize_time(t: str) -> str:
     """Normalize dot time separator: 20.12 → 20:12"""
     return t.replace(".", ":")
+
+
+_RE_BRACKET_ANNOTATION = re.compile(r'\[[^\]]*\]')
+
+
+def _sanitize_code(val: str) -> str:
+    """Keep only CJK characters — redemption codes are pure Chinese text.
+
+    Strips XHS emoji annotations like [蹲后续H], English text, symbols, etc.
+    """
+    if not val:
+        return ""
+    # Remove bracketed annotations (XHS emoji placeholders)
+    val = _RE_BRACKET_ANNOTATION.sub('', val)
+    # Remove trailing incomplete brackets: [text-without-closing
+    val = re.sub(r'\[[^\]]*$', '', val)
+    # Keep only CJK unified ideographs
+    return re.sub(r'[^\u4e00-\u9fff]', '', val)
 
 
 # ---------------------------------------------------------------------------
@@ -477,6 +497,22 @@ def _parse_codes(text: str, post_url: str) -> Optional[CodeBundle]:
     if not universal and not timed and not weekly:
         return None
 
+    # Sanitize code values — codes are pure Chinese text
+    if weekly:
+        weekly = _sanitize_code(weekly) or None
+    if universal:
+        universal = _sanitize_code(universal) or None
+    timed = [
+        TimedCodeWindow(
+            number=t.number, start=t.start, end=t.end,
+            code=_sanitize_code(t.code) if t.code else "",
+        )
+        for t in timed
+    ]
+
+    if not universal and not timed and not weekly:
+        return None
+
     return CodeBundle(
         date_label=date_label,
         post_title=title,
@@ -540,6 +576,108 @@ def _build_notifications(bundle: CodeBundle, state: dict, now: datetime) -> list
 
 
 # ---------------------------------------------------------------------------
+# Report & downranking helpers
+# ---------------------------------------------------------------------------
+
+def _timed_code_status(t: TimedCodeWindow, now: datetime) -> str:
+    """Human-readable status of a timed code slot."""
+    if t.code:
+        return t.code
+    if not t.start:
+        return "未更新"
+    try:
+        window_start = _time_of(now, t.start)
+        window_end = (
+            _time_of(now, t.end) if t.end
+            else window_start + timedelta(minutes=15)
+        )
+    except (ValueError, IndexError):
+        return "未更新"
+    if now < window_start:
+        return "未更新（时间未到）"
+    elif now <= window_end + timedelta(minutes=10):
+        return "未更新（等待博主更新）"
+    else:
+        return "未更新（博主未发布）"
+
+
+def _format_report(bundle: CodeBundle, now: datetime) -> str:
+    """Build a structured summary of all codes for display."""
+    date_str = bundle.date_label or f"{now.month}.{now.day}"
+    beijing_time = now.strftime("%Y-%m-%d %H:%M")
+    sep = "─" * 32
+
+    lines = [
+        sep,
+        f"花园世界兑换码 {date_str}",
+        f"北京时间: {beijing_time}",
+        f"来源: {bundle.post_url}",
+        sep,
+        "",
+        f"周码: {bundle.weekly_code or '未获取'}",
+        f"通用码: {bundle.universal_code or '未获取'}",
+        "",
+    ]
+
+    # Timed codes — show all known, pad to 3 minimum
+    shown: set[int] = set()
+    for t in sorted(bundle.timed, key=lambda x: x.number):
+        shown.add(t.number)
+        status = _timed_code_status(t, now)
+        if t.start and t.end:
+            lines.append(f"限时码{t.number} ({t.start}-{t.end}): {status}")
+        else:
+            lines.append(f"限时码{t.number}: {status}")
+
+    for i in range(1, 4):
+        if i not in shown:
+            lines.append(f"限时码{i}: 未更新（时间未到）")
+
+    lines.append(sep)
+    return "\n".join(lines)
+
+
+def _downrank_stale_bloggers(
+    bloggers: dict, bundle: CodeBundle, now: datetime,
+    cached_user_id: str,
+) -> list[str]:
+    """Reduce trust for the cached-post blogger if codes are missing past windows.
+
+    Returns info messages describing any downranking actions taken.
+    """
+    if not cached_user_id or cached_user_id not in bloggers:
+        return []
+
+    missing_past_window = 0
+    for t in bundle.timed:
+        if t.code:
+            continue
+        if not t.start or not t.end:
+            continue
+        try:
+            window_end = _time_of(now, t.end)
+        except (ValueError, IndexError):
+            continue
+        # Past window end + 10 min grace period → code should have appeared
+        if now > window_end + timedelta(minutes=10):
+            missing_past_window += 1
+
+    if missing_past_window == 0:
+        return []
+
+    info = bloggers[cached_user_id]
+    old_count = info.get("success_count", 1)
+    new_count = max(0, old_count - missing_past_window)
+    info["success_count"] = new_count
+    nickname = info.get("nickname", "?")
+
+    return [
+        f"降权 {nickname}: {missing_past_window}个限时码超时未更新 "
+        f"(trust: {old_count}→{new_count})"
+    ]
+
+
+# ---------------------------------------------------------------------------
 # Entry points
 # ---------------------------------------------------------------------------
 
@@ -551,29 +689,31 @@ def run(now_mode: bool, force_refresh: bool) -> int:
 
         bundle = _find_today_bundle(settings, now, state, force_refresh=force_refresh)
         if not bundle:
+            beijing_time = now.strftime("%Y-%m-%d %H:%M")
             print("STATUS: no_today_post_found")
+            print(f"北京时间: {beijing_time}")
             print("SCHEDULE_HINT: 建议QClaw cron在19:00-23:30每5分钟运行一次本技能")
             _write_state(settings.state_path, state)
             return 0
 
-        notifications = _build_notifications(bundle, state, now)
+        # ── Formatted report (always shown) ──
+        print(_format_report(bundle, now))
 
-        print(f"STATUS: ok date={now.strftime('%Y-%m-%d')} source={bundle.post_url}")
+        # ── Downrank bloggers with missing codes past time windows ──
+        cached_uid = state.get("cached_post_user_id", "")
+        bloggers = state.get("trusted_bloggers", {})
+        downrank_msgs = _downrank_stale_bloggers(bloggers, bundle, now, cached_uid)
+        for msg in downrank_msgs:
+            print(f"INFO: {msg}")
+
+        # ── Push notifications for newly-due codes ──
+        notifications = _build_notifications(bundle, state, now)
         if not notifications:
             print("STATUS: no_new_code_due")
-
         for line in notifications:
             print(f"NOTIFY: {line}")
 
-        windows = ", ".join(
-            f"{t.number}:{t.start}-{t.end}{'✓' if t.code else '?'}"
-            for t in bundle.timed
-        )
-        if windows:
-            print(f"INFO: windows={windows}")
-
-        # Report trusted bloggers
-        bloggers = state.get("trusted_bloggers", {})
+        # Trusted bloggers summary
         if bloggers:
             bl = ", ".join(
                 f"{v.get('nickname', '?')}(×{v.get('success_count', 0)})"
