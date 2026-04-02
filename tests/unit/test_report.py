@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 from garden_world.main import (
     _downrank_stale_bloggers,
     _format_report,
+    _is_guanfu_post,
     _sanitize_code,
     _timed_code_status,
 )
@@ -206,3 +207,34 @@ class TestDownrankStaleBloggers:
         )
         msgs = _downrank_stale_bloggers(bloggers, bundle, _dt(22, 30), "uid1")
         assert bloggers["uid1"]["success_count"] == 0
+
+
+# ── _is_guanfu_post ────────────────────────────────────────
+
+
+class TestIsGuanfuPost:
+    def test_guanfu_explicit(self):
+        assert _is_guanfu_post("我的花园世界4.2兑换码（官服）\n通用码:测试") is True
+
+    def test_no_server_marker(self):
+        assert _is_guanfu_post("我的花园世界4.2兑换码\n通用码:测试") is True
+
+    def test_zhifu_rejected(self):
+        assert _is_guanfu_post("我的花园世界4.2兑换码（支服）\n限时兑换码:") is False
+
+    def test_zhifubao_rejected(self):
+        assert _is_guanfu_post("我的花园世界4.2兑换码（支付宝服）") is False
+
+    def test_b_server_rejected(self):
+        assert _is_guanfu_post("我的花园世界4.2兑换码B服\n") is False
+
+    def test_qudao_rejected(self):
+        assert _is_guanfu_post("我的花园世界兑换码 渠道服\n码:") is False
+
+    def test_zfb_rejected(self):
+        assert _is_guanfu_post("我的花园世界2026.3.28兑换码ZFB\n限时兑换码:") is False
+
+    def test_zhifu_deep_in_text_allowed(self):
+        # 支服 marker past the 300-char header area should be ignored
+        text = "我的花园世界4.2兑换码\n通用码:测试\n" + "x" * 300 + "支服"
+        assert _is_guanfu_post(text) is True

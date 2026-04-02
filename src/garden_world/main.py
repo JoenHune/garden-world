@@ -97,7 +97,7 @@ def _find_today_bundle(
     cached_date = state.get("cached_date", "")
     if cached_url and cached_date == today_key and not force_refresh:
         nr = fetch_note(cached_url, profile_dir=settings.profile_dir)
-        if nr:
+        if nr and _is_guanfu_post(nr.text):
             bundle = _parse_codes(nr.text, cached_url)
             if bundle:
                 return bundle
@@ -114,6 +114,11 @@ def _find_today_bundle(
     best_user: tuple[str, str] = ("", "")  # user_id, nickname
 
     for nr in notes:
+        # Skip posts for non-官服 servers (支服, B服, etc.)
+        if not _is_guanfu_post(nr.text):
+            print(f"INFO: skipped non-官服 post: {nr.url}", flush=True)
+            continue
+
         bundle = _parse_codes(nr.text, nr.url)
         if not bundle:
             continue
@@ -200,6 +205,18 @@ def _prune_bloggers(bloggers: dict, today_key: str) -> None:
         )
         for uid in sorted_uids[:len(bloggers) - _BLOGGER_MAX_ENTRIES]:
             del bloggers[uid]
+
+
+# Posts for non-官服 servers (支服/B服/渠道服) have different codes & times.
+# We only want 官服 (the default official server).
+_RE_NON_GUANFU = re.compile(r'支服|支付宝服|[Bb]服|渠道服|ZFB|zfb')
+
+
+def _is_guanfu_post(text: str) -> bool:
+    """Return True if the post text is for 官服 (official server) or unspecified."""
+    # Check only the first ~300 chars (title + header area)
+    header = text[:300]
+    return not _RE_NON_GUANFU.search(header)
 
 
 def _score_bundle(b: CodeBundle) -> int:
@@ -324,7 +341,7 @@ def _parse_codes(text: str, post_url: str) -> Optional[CodeBundle]:
                 universal = val
     if not universal:
         # "N 点兑换码: CODE" (daily code, not 限时)
-        u3 = re.search(r"\d+\s*点兑换码\s*:\s*([^\n\r]+)", norm)
+        u3 = re.search(r"\d+\s*点兑换码\s*:[ \t]*([^\n\r]+)", norm)
         if u3:
             val = _clean_code(u3.group(1))
             if val and "待更新" not in val:
@@ -381,7 +398,7 @@ def _parse_codes(text: str, post_url: str) -> Optional[CodeBundle]:
     # Format C: "N 点限时码: CODE" — time range on next line "有效期: HH:MM-HH:MM"
     if not timed:
         pattern_c = re.compile(
-            r"(\d+)\s*点限时码\s*:\s*([^\n\r]+)"
+            r"(\d+)\s*点限时码\s*:[ \t]*([^\n\r]*)"
         )
         time_ranges = re.findall(
             rf"有效期\s*:\s*({_T})\s*[-~]\s*({_T})", norm
