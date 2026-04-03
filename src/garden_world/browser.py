@@ -246,7 +246,7 @@ def _screenshot_login_wall(page: Page, dest: Path) -> None:
             pass
 
     if captured:
-        print(f"QR_IMAGE: {dest}", flush=True)
+        print(f"QR_IMAGE: {dest.resolve()}", flush=True)
 
 
 # ---------------------------------------------------------------------------

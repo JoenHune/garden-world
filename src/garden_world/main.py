@@ -260,6 +260,8 @@ def _sanitize_code(val: str) -> str:
     """Keep only CJK characters — redemption codes are pure Chinese text.
 
     Strips XHS emoji annotations like [蹲后续H], English text, symbols, etc.
+    Returns empty string for placeholder/descriptive text that isn't actually
+    a code (e.g. "限时码特定分钟之内有效").
     """
     if not val:
         return ""
@@ -268,7 +270,32 @@ def _sanitize_code(val: str) -> str:
     # Remove trailing incomplete brackets: [text-without-closing
     val = re.sub(r'\[[^\]]*$', '', val)
     # Keep only CJK unified ideographs
-    return re.sub(r'[^\u4e00-\u9fff]', '', val)
+    code = re.sub(r'[^\u4e00-\u9fff]', '', val)
+    # Reject placeholder / descriptive text that isn't an actual code
+    if _is_placeholder(code):
+        return ""
+    return code
+
+
+# Words that appear in descriptive/placeholder text but never in real codes.
+# Examples of rejected text: "限时码特定分钟之内有效", "需要在特定分钟之内使用才有效"
+_PLACEHOLDER_WORDS = re.compile(
+    r"待更新|待公布|待发布|未公布|未发布|未更新|敬请期待"
+    r"|有效期?|过期|分钟|小时"
+    r"|限时码|通用码|周码|兑换码"
+    r"|需要|使用|特定|之内|才能|请在"
+)
+
+
+def _is_placeholder(code: str) -> bool:
+    """Return True if *code* looks like descriptive text rather than a real code."""
+    if not code:
+        return True
+    # Real codes are short poetic phrases, typically 4-8 CJK characters.
+    # Descriptions/placeholders are longer and contain functional words.
+    if _PLACEHOLDER_WORDS.search(code):
+        return True
+    return False
 
 
 # ---------------------------------------------------------------------------
