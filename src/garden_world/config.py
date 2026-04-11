@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 import os
 
@@ -13,6 +13,13 @@ class Settings:
     profile_dir: Path = Path(".garden_world/browser_profile")
     channel: str = "wechat"
     max_candidates: int = 8
+    # Minimum bloggers to cross-validate codes (at least 3 for reliability)
+    min_cross_validate: int = 3
+
+    @property
+    def config_dir(self) -> Path:
+        """Directory containing state.json, wechat.json, autoreply.json."""
+        return self.state_path.parent
 
     @staticmethod
     def from_env() -> "Settings":

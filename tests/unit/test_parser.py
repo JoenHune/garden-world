@@ -194,6 +194,37 @@ def test_universal_with_paren_time():
     assert bundle.weekly_code == "指尖花开治愈常在"
     assert len(bundle.timed) == 3
     assert all(t.code == "" for t in bundle.timed)
+    # Time hints extracted from "N点左右" text
+    assert bundle.timed[0].start == "20:00"
+    assert bundle.timed[1].start == "21:00"
+    assert bundle.timed[2].start == "22:00"
+    # No end time derivable from approximate hints
+    assert all(t.end == "" for t in bundle.timed)
+
+
+# ── Format F: CJK ordinals with codes filled — no time in text ──
+
+SAMPLE_F_FILLED = """\
+我的花园世界 4.11日兑换码
+本周周码（4.8-4.14）：花园入洛共见春光
+今日通用兑换码（19:00）：花开成景春意成行
+限时码一：风送花香满园成趣
+限时码二：一园芳菲恰好盛放
+限时码三：春色入园万物生辉
+"""
+
+
+def test_format_f_filled_codes_no_time():
+    bundle = _parse_codes(SAMPLE_F_FILLED, "https://example.com/ff")
+    assert bundle is not None
+    assert bundle.universal_code == "花开成景春意成行"
+    assert len(bundle.timed) == 3
+    assert bundle.timed[0].code == "风送花香满园成趣"
+    assert bundle.timed[1].code == "一园芳菲恰好盛放"
+    assert bundle.timed[2].code == "春色入园万物生辉"
+    # No time info in the text — start/end should be empty
+    assert all(t.start == "" for t in bundle.timed)
+    assert all(t.end == "" for t in bundle.timed)
 
 
 # ── Format E: 限时兑换码(...) + 兑换码N: ──

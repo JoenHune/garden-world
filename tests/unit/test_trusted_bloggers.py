@@ -88,9 +88,9 @@ class TestPruneBloggers:
                 "success_count": i,
                 "last_seen": "2025-04-15",
             }
-            for i in range(15)
+            for i in range(25)
         }
         _prune_bloggers(bloggers, "2025-04-15")
-        assert len(bloggers) == 10
+        assert len(bloggers) == 20  # _BLOGGER_MAX_ENTRIES raised to 20
         assert "uid_0" not in bloggers  # lowest removed
-        assert "uid_14" in bloggers     # highest kept
+        assert "uid_24" in bloggers     # highest kept

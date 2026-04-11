@@ -11,10 +11,9 @@ from zoneinfo import ZoneInfo
 
 from garden_world.main import (
     _downrank_stale_bloggers,
-    _format_report,
+    _format_codes,
     _is_guanfu_post,
     _sanitize_code,
-    _timed_code_status,
 )
 from garden_world.models import CodeBundle, TimedCodeWindow
 
@@ -52,35 +51,10 @@ class TestSanitizeCode:
         assert _sanitize_code("春风拂面[开心R]好心情") == "春风拂面好心情"
 
 
-# ── _timed_code_status ──────────────────────────────────────
+# ── _format_codes ───────────────────────────────────────────
 
 
-class TestTimedCodeStatus:
-    def test_code_present(self):
-        t = TimedCodeWindow(number=1, start="20:00", end="20:15", code="测试码")
-        assert _timed_code_status(t, _dt(20, 5)) == "测试码"
-
-    def test_no_time_window(self):
-        t = TimedCodeWindow(number=1, start="", end="", code="")
-        assert _timed_code_status(t, _dt(20, 0)) == "未更新"
-
-    def test_before_window(self):
-        t = TimedCodeWindow(number=1, start="21:00", end="21:15", code="")
-        assert _timed_code_status(t, _dt(20, 30)) == "未更新（时间未到）"
-
-    def test_within_window_grace(self):
-        t = TimedCodeWindow(number=1, start="20:00", end="20:15", code="")
-        assert _timed_code_status(t, _dt(20, 20)) == "未更新（等待博主更新）"
-
-    def test_past_window(self):
-        t = TimedCodeWindow(number=1, start="20:00", end="20:15", code="")
-        assert _timed_code_status(t, _dt(20, 30)) == "未更新（博主未发布）"
-
-
-# ── _format_report ──────────────────────────────────────────
-
-
-class TestFormatReport:
+class TestFormatCodes:
     def test_full_report(self):
         bundle = CodeBundle(
             date_label="4.2",
@@ -94,14 +68,13 @@ class TestFormatReport:
                 TimedCodeWindow(3, "22:14", "22:29", ""),
             ],
         )
-        report = _format_report(bundle, _dt(21, 45))
-        assert "花园世界兑换码 4.2" in report
-        assert "北京时间: 2026-04-02 21:45" in report
-        assert "周码: 韶华常在花园新章" in report
-        assert "通用码: 桃月花开春意正浓" in report
-        assert "限时码1 (20:01-20:16): 丁香凝露含清怨" in report
-        assert "限时码2 (21:26-21:41): 浅紫轻白缀碧芳" in report
-        assert "限时码3 (22:14-22:29): 未更新（时间未到）" in report
+        report = _format_codes(bundle, _dt(21, 45))
+        assert "🌸 花园世界兑换码 4.2" in report
+        assert "✅ 周码: 韶华常在花园新章" in report
+        assert "✅ 通用码: 桃月花开春意正浓" in report
+        assert "⏱️ 限时码1 (20:01-20:16): 丁香凝露含清怨" in report
+        assert "⏱️ 限时码2 (21:26-21:41): 浅紫轻白缀碧芳" in report
+        assert "⏱️ 限时码3 (22:14-22:29): (未更新)" in report
 
     def test_pads_to_three(self):
         bundle = CodeBundle(
@@ -114,10 +87,10 @@ class TestFormatReport:
                 TimedCodeWindow(1, "20:00", "20:15", "码一"),
             ],
         )
-        report = _format_report(bundle, _dt(19, 0))
-        assert "限时码1" in report
-        assert "限时码2: 未更新（时间未到）" in report
-        assert "限时码3: 未更新（时间未到）" in report
+        report = _format_codes(bundle, _dt(19, 0))
+        assert "⏱️ 限时码1" in report
+        assert "⏱️ 限时码2 (未更新): (未更新)" in report
+        assert "⏱️ 限时码3 (未更新): (未更新)" in report
 
     def test_missing_codes_show_placeholder(self):
         bundle = CodeBundle(
@@ -128,9 +101,9 @@ class TestFormatReport:
             universal_code=None,
             timed=[TimedCodeWindow(1, "", "", "")],
         )
-        report = _format_report(bundle, _dt(19, 0))
-        assert "周码: 未获取" in report
-        assert "通用码: 未获取" in report
+        report = _format_codes(bundle, _dt(19, 0))
+        assert "✅ 周码: (未更新)" in report
+        assert "✅ 通用码: (未更新)" in report
 
 
 # ── _downrank_stale_bloggers ────────────────────────────────

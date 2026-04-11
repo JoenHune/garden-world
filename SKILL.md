@@ -28,17 +28,20 @@ python3 -m playwright install chromium
 
 ## 执行步骤
 
-1. 运行 `garden-world --now --auto-login`
-2. 解读输出：
+1. **推荐**：启动 daemon 模式 `garden-world daemon`（自动调度 + 微信推送，无需人工干预）
+2. 一次性获取：`garden-world --now --auto-login`
+3. 解读输出：
    - `STATUS: ok` — 成功，查看 `NOTIFY:` 行
    - `STATUS: no_today_post_found` — 今日帖子尚未发布，稍后重试
    - `STATUS: no_new_code_due` — 无新增需推送的码
    - `QR_IMAGE: <路径>` — 登录过期，二维码已自动生成，**立即用 `message` 工具的 `media` 参数转发图片给用户**
    - `LOGIN_OK:` — 用户扫码成功，程序自动重试获取兑换码
    - `LOGIN_FAIL:` / `STATUS: login_failed` — 超时，告诉用户稍后重试
-3. 如有 `NOTIFY:` 行，逐条发送到当前会话
-4. `INFO: windows=` 行显示限时码状态：`✓` 已获取，`?` 尚未公布
-5. 强制重新搜索：`garden-world --now --force-refresh --auto-login`
+4. 如有 `NOTIFY:` 行，逐条发送到当前会话
+5. `INFO: windows=` 行显示限时码状态：`✓` 已获取，`?` 尚未公布
+6. 微信推送：`garden-world push --force`
+7. 时间窗口补全：`garden-world enrich`
+8. 绑定微信：`garden-world bind`
 
 > **`--auto-login`** 会在登录过期时自动启动 headless 登录流程并输出 QR 二维码，
 > 登录成功后自动重试 `--now`，**省去一次 LLM 往返，大幅缩短二维码送达时间**。

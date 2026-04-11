@@ -79,10 +79,16 @@ garden-world --now
 
 | 命令/参数 | 说明 |
 |------|------|
+| `garden-world daemon` | 启动守护进程（内置调度 + 微信推送 + 自动回复） |
+| `garden-world bind` | 绑定微信 ClawBot 账号（QR 码扫描） |
+| `garden-world login [--headless]` | 扫码登录小红书 |
+| `garden-world push [--force]` | 从缓存推送今日码到微信 |
+| `garden-world enrich` | 多源搜索补全时间窗口并推送 |
+| `garden-world import-wechat` | 从 OpenClaw 导入微信账号 |
 | `garden-world --now` | 立即执行一次，检查当前时间是否有新码可发 |
 | `garden-world --now --force-refresh` | 强制重新搜索（跳过缓存 URL 快速路径） |
-| `garden-world login` | 扫码登录小红书（弹出浏览器窗口） |
-| `garden-world login --headless` | 无窗口模式登录，QR 码通过 stdout 输出 |
+| `garden-world --now --auto-login` | 登录过期时自动 headless 登录 |
+| `-v` / `--verbose` | 开启 DEBUG 日志 |
 
 ## 环境变量
 
@@ -93,27 +99,61 @@ garden-world --now
 | `GARDEN_WORLD_KEYWORD` | `我的花园世界 兑换码` | 小红书搜索关键词 |
 | `GARDEN_WORLD_TZ` | `Asia/Shanghai` | 时区 |
 | `GARDEN_WORLD_MAX_CANDIDATES` | `8` | 搜索候选帖最大数量 |
+| `GARDEN_WORLD_WECHAT_CONFIG` | `.garden_world/wechat.json` | 微信账号配置路径 |
 
-## 渐进式检测原理
+## Daemon 模式
 
-博主通常在 19:00 左右发帖，此时帖子中只有限时码的时间窗（如 `19:58~20:13`），
-但限时码内容为空。随后在每个时间窗开始时编辑帖子填入实际限时码。
+`garden-world daemon` 启动后会自动完成以下流程：
 
+1. **19:05** — 搜索帖子，推送通用码 + 周码
+2. **19:00–23:30** — 每 5 分钟检测限时码时间窗
+3. **窗口开始 +5min** — 自动抓取限时码并推送
+4. **3 码全齐** — 当日停止轮询（early exit）
+
+Daemon 同时运行：
+- **AutoReply 线程** — 持续 long-poll getUpdates，关键词匹配自动回复
+- **context_token 刷新** — 每次 getUpdates 自动更新 token，确保推送不中断
+
+## 微信推送
+
+### 绑定流程
+
+```bash
+garden-world bind
 ```
-19:00  ─── 搜索发现帖子，推送通用码；限时码 1/2/3 时间窗已知但码为空
-19:58  ─── 限时码 1 时间窗开始，博主更新帖子
-20:03  ─── cron: 重新访问帖子 → 发现限时码 1 已填入 → ✅ 推送
-21:26  ─── 限时码 2 时间窗开始
-21:31  ─── cron: 重新访问 → 发现限时码 2 → ✅ 推送
-22:14  ─── 限时码 3 时间窗开始
-22:19  ─── cron: 重新访问 → 发现限时码 3 → ✅ 推送
-```
 
-## 注意事项
+1. 终端显示 QR 码 → 微信扫码 → 确认
+2. 向 Bot 发送任意消息（如"你好"）以激活推送
+3. 绑定完成，确认消息自动发送
 
-- 周码是可选的，不是每天都有
-- 限时码通常有 3 个，每个有 15 分钟窗口，分布在约 19:58、21:26、22:14 左右（每天不同）
-- 首次发现帖子时限时码可能为空（显示为 `?`），后续 cron 会自动检测更新
-- **信任博主机制**：高质量博文的作者 ID 被记录，下次搜索时优先选择（+5 评分加成），超 14 天未出现自动清理，最多保留 10 个
-- 支持 7 种博文格式变体（点分时间如 `20.12`、`限时兑换码+兑换码N:`、`限时(HH:MM-HH:MM)兑换码:`、`限时码一/二/三` 中文序号等）
-- `INFO: trusted_bloggers=` 行显示当前信任博主及其成功次数
+### context_token 生命周期
+
+iLink API 要求每次发送消息时带上 `context_token`。该 token 随每条用户消息下发：
+
+- **Daemon 模式** — AutoReply 持续轮询，token 始终新鲜 ✅
+- **一次性命令** — `push`/`enrich` 启动时主动 refresh ✅
+- **发送失败 ret=-2** — 自动 refresh → 重试一次 ✅
+- **长时间无消息** — token 可能过期，需向 Bot 发一条消息激活
+
+### 多账号
+
+最多 5 个账号，推送时广播到所有已绑定账号。
+
+## 博主评分系统
+
+### 四维评分
+
+| 维度 | 权重 | 含义 |
+|------|------|------|
+| `timeliness` | ×2 | 帖子发布的时效性 |
+| `reliability` | ×3 | 码与其他源交叉验证一致率 |
+| `format` | ×1 | 博文格式规范度 |
+| `time_window` | ×2 | 是否写出时间窗口 |
+
+信任加成 = `timeliness×2 + reliability×3 + format×1 + time_window×2`（满分 +8）
+
+### 降权机制
+
+- 不写时间窗口的博主 `time_window_score` 持续下降（滑动平均 α=0.3）
+- 超过时间窗仍未填码 → `success_count` 直接扣减
+- 14 天未出现 → 自动清理
